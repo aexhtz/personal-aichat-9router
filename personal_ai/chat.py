@@ -23,7 +23,7 @@ Jawablah pertanyaan pengguna dengan jelas dan terstruktur. Gunakan bahasa yang s
 DEFAULT_BASE_URL = "http://localhost:20128/v1"
 DEFAULT_MODEL = "9router-gptcontext1m"
 MAX_HISTORY_MESSAGES = 40
-COLORS = {"cyan": "36", "green": "32", "yellow": "33", "red": "31", "dim": "2"}
+COLORS = {"cyan": "36", "green": "32", "yellow": "33", "red": "31", "dim": "2", "bold": "1", "magenta": "35"}
 
 def _paint(text: str, color: str) -> str:
     if not sys.stdout.isatty() or os.getenv("NO_COLOR") is not None:
@@ -40,26 +40,31 @@ def _ai_label(model: str) -> str:
     return f"AI {model}"
 
 
-LOGO_ART = [
-    r"    ___    ____",
-    r"   /   |  /  _/",
-    r"  / /| |  / /  ",
-    r" / ___ |_/ /   ",
-    r"/_/  |_/___/   ",
-]
+def _init_terminal() -> None:
+    # ponytail: aktifkan VT100 escape codes di Windows console; upgrade ke curses jika butuh TUI penuh
+    if os.name == "nt":
+        os.system("")
 
 
 def _print_logo() -> None:
+    _init_terminal()
     width = shutil.get_terminal_size((80, 20)).columns
-    print()
-    for line in LOGO_ART:
-        pad = max((width - len(line)) // 2, 0)
-        print(" " * pad + _paint(line, "cyan"))
+    pad = " " * max((width - 56) // 2, 0)
 
-    subtitle = "─ PERSONAL AI ASSISTANT ─"
-    pad = max((width - len(subtitle)) // 2, 0)
+    rows = [
+        pad + _paint("╭── ", "cyan") + _paint("PERSONAL AI", "bold") + _paint(" ───────────────────────────────────────╮", "cyan"),
+        pad + _paint("│", "cyan") + " " * 54 + _paint("│", "cyan"),
+        pad + _paint("│", "cyan") + "      " + _paint("___    ____", "cyan") + "                                     " + _paint("│", "cyan"),
+        pad + _paint("│", "cyan") + "     " + _paint("/   |  /  _/", "cyan") + "    " + _paint("Intelligence Terminal Console", "bold") + "    " + _paint("│", "cyan"),
+        pad + _paint("│", "cyan") + "    " + _paint("/ /| |  / /  ", "cyan") + "    " + _paint("Engine  :", "dim") + " 9Router Multi-Model    " + _paint("│", "cyan"),
+        pad + _paint("│", "cyan") + "   " + _paint("/ ___ |_/ /   ", "cyan") + "    " + _paint("Status  :", "dim") + " " + _paint("Online & Ready", "green") + "         " + _paint("│", "cyan"),
+        pad + _paint("│", "cyan") + "  " + _paint("/_/  |_/___/   ", "cyan") + "    " + _paint("Panduan :", "dim") + " Ketik " + _paint("/help", "cyan") + "            " + _paint("│", "cyan"),
+        pad + _paint("│", "cyan") + " " * 54 + _paint("│", "cyan"),
+        pad + _paint("╰──────────────────────────────────────────────────────╯", "cyan"),
+    ]
     print()
-    print(" " * pad + _paint(subtitle, "dim"))
+    for row in rows:
+        print(row)
     print()
 
 
@@ -83,6 +88,58 @@ def get_combos(client: OpenAI) -> list[str]:
     response = client.models.list()
     return sorted({item.id for item in response.data if item.id.startswith("9router-")})
 
+def _interactive_select(options: list[str], default_idx: int) -> int:
+    import msvcrt
+    idx = default_idx
+    total = len(options)
+    width = shutil.get_terminal_size((80, 20)).columns
+    pad = " " * max((width - 56) // 2, 0)
+
+    def draw(first: bool = False) -> None:
+        if not first:
+            print(f"\033[{total}A", end="")
+        for i, opt in enumerate(options):
+            marker = " ★" if i == default_idx else ""
+            if i == idx:
+                line = f"{pad} ❯ [{i+1}] {opt}{marker}"
+                print("\033[2K" + _paint(line, "cyan"))
+            else:
+                line = f"{pad}   [{i+1}] {opt}{marker}"
+                print("\033[2K" + _paint(line, "dim" if i != default_idx else "green"))
+        sys.stdout.flush()
+
+    print(pad + _paint("PILIH COMBO", "cyan") + _paint(" (Gunakan ↑/↓ lalu Enter, atau ketik nomor):", "dim"))
+    draw(first=True)
+
+    buf = ""
+    while True:
+        key = msvcrt.getwch()
+        if key in ("\r", "\n"):
+            if buf.isdigit() and 1 <= int(buf) <= total:
+                return int(buf) - 1
+            return idx
+        elif key in ("\x00", "\xe0"):
+            arrow = msvcrt.getwch()
+            buf = ""
+            if arrow == "H":
+                idx = (idx - 1) % total
+                draw()
+            elif arrow == "P":
+                idx = (idx + 1) % total
+                draw()
+        elif key.isdigit():
+            buf += key
+            val = int(buf)
+            if 1 <= val <= total:
+                idx = val - 1
+                draw()
+        elif key in ("\x08",):
+            buf = buf[:-1]
+        elif key in ("\x03", "\x1b"):
+            print()
+            raise KeyboardInterrupt
+
+
 def choose_combo(
     combos: list[str],
     default_model: str,
@@ -94,6 +151,17 @@ def choose_combo(
         return choice or default_model
     if default_model not in options:
         options.insert(0, default_model)
+
+    default_idx = options.index(default_model)
+
+    # ponytail: arrow navigation via msvcrt jika terminal interaktif; fallback ke input biasa di testing/piping
+    if input_fn is input and sys.stdin.isatty() and os.name == "nt":
+        try:
+            chosen = _interactive_select(options, default_idx)
+            print()
+            return options[chosen]
+        except (ImportError, OSError):
+            pass
 
     print("\n" + _paint("PILIH COMBO", "cyan"))
     for index, combo in enumerate(options, 1):
@@ -208,20 +276,37 @@ def _animate_loading(stop: threading.Event, model: str) -> None:
 
 
 COMMANDS_HELP = [
-    ("/help", "Menampilkan daftar perintah dan bantuan"),
-    ("/model", "Mengganti model/combo AI yang sedang aktif"),
-    ("/status", "Menampilkan status model & riwayat percakapan"),
-    ("/clear", "Membersihkan layar terminal"),
-    ("/save [file]", "Menyimpan riwayat percakapan ke file teks"),
-    ("/reset", "Mereset riwayat percakapan"),
+    ("/help", "Panduan daftar perintah ini"),
+    ("/model", "Ganti model AI via menu interaktif"),
+    ("/status", "Status model aktif & statistik chat"),
+    ("/clear", "Bersihkan tampilan layar terminal"),
+    ("/save [file]", "Simpan riwayat chat ke file teks"),
+    ("/reset", "Reset percakapan saat ini"),
     ("/exit", "Keluar dari aplikasi"),
 ]
 
 
 def print_help() -> None:
-    print("\n" + _paint("DAFTAR PERINTAH TERSEDIA:", "cyan"))
+    width = shutil.get_terminal_size((80, 20)).columns
+    pad = " " * max((width - 56) // 2, 0)
+    target_inner = 54
+    print()
+    print(pad + _paint("╭─ PANDUAN PERINTAH ───────────────────────────────────╮", "cyan"))
     for cmd, desc in COMMANDS_HELP:
-        print(f"  {_paint(f'{cmd:<13}', 'green')} - {desc}")
+        visible_len = len(f"  {cmd:<13} {desc}")
+        trailing = " " * max(target_inner - visible_len, 0)
+        row = (
+            pad
+            + _paint("│", "cyan")
+            + "  "
+            + _paint(f"{cmd:<13}", "green")
+            + " "
+            + desc
+            + trailing
+            + _paint("│", "cyan")
+        )
+        print(row)
+    print(pad + _paint("╰──────────────────────────────────────────────────────╯", "cyan"))
 
 
 def save_history(messages: list[dict[str, str]], filename: str = "chat_export.txt") -> None:
@@ -232,17 +317,38 @@ def save_history(messages: list[dict[str, str]], filename: str = "chat_export.tx
                 if role == "SYSTEM":
                     continue
                 file.write(f"[{role}]\n{msg['content']}\n\n")
-        print(_paint(f"Riwayat percakapan berhasil disimpan ke '{filename}'.", "green"))
+        print(_paint(f"✔ Riwayat percakapan disimpan ke '{filename}'.", "green"))
     except (OSError, ValueError, TypeError) as error:
-        print(_paint(f"Gagal menyimpan file: {error}", "red"))
+        print(_paint(f"✘ Gagal menyimpan file: {error}", "red"))
 
 
 def print_status(model: str, base_url: str, message_count: int) -> None:
     turns = (message_count - 1) // 2
-    print("\n" + _paint("STATUS PERSONAL AI:", "cyan"))
-    print(f"  {_paint('Model Aktif', 'green'):<22}: {model}")
-    print(f"  {_paint('Base URL', 'green'):<22}: {base_url}")
-    print(f"  {_paint('Total Percakapan', 'green'):<22}: {turns} turn ({message_count - 1} pesan)")
+    width = shutil.get_terminal_size((80, 20)).columns
+    pad = " " * max((width - 56) // 2, 0)
+    target_inner = 54
+    status_data = [
+        ("Model Aktif", model),
+        ("Endpoint", base_url),
+        ("Percakapan", f"{turns} turn ({message_count - 1} pesan)"),
+    ]
+    print()
+    print(pad + _paint("╭─ STATUS PERSONAL AI ─────────────────────────────────╮", "cyan"))
+    for label, val in status_data:
+        visible_len = len(f"  {label:<15}: {val}")
+        trailing = " " * max(target_inner - visible_len, 0)
+        row = (
+            pad
+            + _paint("│", "cyan")
+            + "  "
+            + _paint(f"{label:<15}", "green")
+            + ": "
+            + val
+            + trailing
+            + _paint("│", "cyan")
+        )
+        print(row)
+    print(pad + _paint("╰──────────────────────────────────────────────────────╯", "cyan"))
 
 
 def run_chat(
@@ -269,32 +375,44 @@ def run_chat(
     except (EOFError, KeyboardInterrupt):
         return
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    print(_paint("Ketik /help untuk melihat daftar perintah.", "dim"))
+
+    width = shutil.get_terminal_size((80, 20)).columns
+    pad = " " * max((width - 56) // 2, 0)
+    print()
+    print(pad + " Model aktif: " + _paint(model, "cyan"))
+    print(pad + _paint("─" * 56, "dim"))
 
     while True:
         try:
-            question = input_fn("\n" + _paint(">", "cyan") + " ").strip()
+            prompt = f"\n{_paint(f'[{model}]', 'cyan')} {_paint('❯', 'green')} "
+            question = input_fn(prompt).strip()
             if not question:
                 continue
             cmd_parts = question.split(maxsplit=1)
             command = cmd_parts[0].lower()
 
             if command in ("/exit", "/quit"):
+                print(_paint("Sampai jumpa!", "dim"))
                 break
             if command == "/help":
                 print_help()
                 continue
             if command == "/reset":
                 messages[:] = [{"role": "system", "content": SYSTEM_PROMPT}]
-                print(_paint("Riwayat percakapan direset.", "dim"))
+                print(_paint("✔ Riwayat percakapan direset.", "dim"))
                 continue
             if command in ("/clear", "/cls"):
                 os.system("cls" if os.name == "nt" else "clear")
+                _print_logo()
+                print(pad + _paint("✔", "green") + " Model aktif: " + _paint(model, "cyan"))
+                print(pad + _paint("─" * 56, "dim"))
                 continue
             if command in ("/model", "/combo"):
                 try:
                     model = choose_combo(combos, model or DEFAULT_MODEL, input_fn)
-                    print(_paint(f"Model diganti ke: {model}", "green"))
+                    print()
+                    print(pad + _paint("✔", "green") + " Model aktif: " + _paint(model, "cyan"))
+                    print(pad + _paint("─" * 56, "dim"))
                 except (EOFError, KeyboardInterrupt):
                     pass
                 continue
