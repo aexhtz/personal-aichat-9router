@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import threading
 from collections.abc import Callable
@@ -20,24 +21,49 @@ SYSTEM_PROMPT = """Kamu adalah AI assistant pribadi yang cerdas, informatif, kri
 
 Jawablah pertanyaan pengguna dengan jelas dan terstruktur. Gunakan bahasa yang sesuai dengan bahasa pengguna. Jangan mengarang informasi apabila tidak mengetahuinya. Hindari Markdown untuk pemformatan: jangan gunakan tanda bintang, termasuk **teks tebal** atau *teks miring*. Gunakan teks biasa dan susunan baris sederhana."""
 DEFAULT_BASE_URL = "http://localhost:20128/v1"
-DEFAULT_MODEL = "cx/gpt-6-luna[1m]"
+DEFAULT_MODEL = "9router-gptcontext1m"
 MAX_HISTORY_MESSAGES = 40
 COLORS = {"cyan": "36", "green": "32", "yellow": "33", "red": "31", "dim": "2"}
-
 
 def _paint(text: str, color: str) -> str:
     if not sys.stdout.isatty() or os.getenv("NO_COLOR") is not None:
         return text
     return f"\033[{COLORS[color]}m{text}\033[0m"
 
-
-def _clear_line() -> str:
+def _clear_line(width: int) -> str:
     if sys.stdout.isatty() and os.getenv("NO_COLOR") is None:
         return "\r\033[2K"
-    return "\r      \r"
+    return "\r" + " " * width + "\r"
 
 
-def create_client() -> tuple[OpenAI, str]:
+def _ai_label(model: str) -> str:
+    return f"AI {model}"
+
+
+LOGO_ART = [
+    r"    ___    ____",
+    r"   /   |  /  _/",
+    r"  / /| |  / /  ",
+    r" / ___ |_/ /   ",
+    r"/_/  |_/___/   ",
+]
+
+
+def _print_logo() -> None:
+    width = shutil.get_terminal_size((80, 20)).columns
+    print()
+    for line in LOGO_ART:
+        pad = max((width - len(line)) // 2, 0)
+        print(" " * pad + _paint(line, "cyan"))
+
+    subtitle = "─ PERSONAL AI ASSISTANT ─"
+    pad = max((width - len(subtitle)) // 2, 0)
+    print()
+    print(" " * pad + _paint(subtitle, "dim"))
+    print()
+
+
+def create_client() -> tuple[OpenAI, str, str]:
     if getattr(sys, "frozen", False):
         load_dotenv(Path(sys.executable).resolve().parent / ".env")
     else:
@@ -51,7 +77,40 @@ def create_client() -> tuple[OpenAI, str]:
     if not base_url or not model:
         raise ValueError("ROUTER_BASE_URL dan ROUTER_MODEL tidak boleh kosong.")
 
-    return OpenAI(api_key=api_key, base_url=base_url, timeout=180, max_retries=2), model
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=180, max_retries=2), model, api_key
+
+def get_combos(client: OpenAI) -> list[str]:
+    response = client.models.list()
+    return sorted({item.id for item in response.data if item.id.startswith("9router-")})
+
+def choose_combo(
+    combos: list[str],
+    default_model: str,
+    input_fn: Callable[[str], str] = input,
+) -> str:
+    options = list(combos)
+    if not options:
+        choice = input_fn(_paint(f"Combo [Enter={default_model}] > ", "cyan")).strip()
+        return choice or default_model
+    if default_model not in options:
+        options.insert(0, default_model)
+
+    print("\n" + _paint("PILIH COMBO", "cyan"))
+    for index, combo in enumerate(options, 1):
+        marker = _paint(" *", "green") if combo == default_model else ""
+        print(f"  {_paint(f'[{index:>2}]', 'dim')}  {combo}{marker}")
+
+    while True:
+        try:
+            choice = input_fn(_paint("Pilihan [Enter=default] > ", "cyan")).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise
+        if not choice:
+            return default_model
+        if choice.isdigit() and 1 <= int(choice) <= len(options):
+            return options[int(choice) - 1]
+        print(_paint("Pilihan tidak valid. Masukkan nomor combo atau tekan Enter.", "yellow"))
 
 def trim_history(messages: list[dict[str, str]], max_messages: int = MAX_HISTORY_MESSAGES) -> None:
     """Keep system prompt and newest complete user/assistant turns."""
@@ -68,12 +127,12 @@ def trim_history(messages: list[dict[str, str]], max_messages: int = MAX_HISTORY
         history.pop(0)
     messages[:] = [system_message, *history]
 
-
 def chat(question: str, client: OpenAI, model: str, messages: list[dict[str, str]]) -> None:
     messages.append({"role": "user", "content": question})
     answer: list[str] = []
     stop_spinner = threading.Event()
-    spinner = threading.Thread(target=_animate_loading, args=(stop_spinner,), daemon=True)
+    label = _ai_label(model)
+    spinner = threading.Thread(target=_animate_loading, args=(stop_spinner, model), daemon=True)
     spinner.start()
     spinner_running = True
 
@@ -82,7 +141,7 @@ def chat(question: str, client: OpenAI, model: str, messages: list[dict[str, str
         if spinner_running:
             stop_spinner.set()
             spinner.join()
-            print(_clear_line() + _paint("AI", "green") + ": ", end="", flush=True)
+            print(_clear_line(len(label) + 3) + _paint(label, "green") + ": ", end="", flush=True)
             spinner_running = False
 
     try:
@@ -138,20 +197,52 @@ def chat(question: str, client: OpenAI, model: str, messages: list[dict[str, str
     finally:
         finish_loading()
 
-
-def _animate_loading(stop: threading.Event) -> None:
+def _animate_loading(stop: threading.Event, model: str) -> None:
     frames = "|/-\\"
     index = 0
     while not stop.is_set():
         frame = _paint(frames[index % len(frames)], "cyan")
-        print(f"\r{_paint('AI', 'green')}: {frame}", end="", flush=True)
+        print(f"\r{_paint(_ai_label(model), 'green')}: {frame}", end="", flush=True)
         index += 1
         stop.wait(0.12)
 
 
+COMMANDS_HELP = [
+    ("/help", "Menampilkan daftar perintah dan bantuan"),
+    ("/model", "Mengganti model/combo AI yang sedang aktif"),
+    ("/status", "Menampilkan status model & riwayat percakapan"),
+    ("/clear", "Membersihkan layar terminal"),
+    ("/save [file]", "Menyimpan riwayat percakapan ke file teks"),
+    ("/reset", "Mereset riwayat percakapan"),
+    ("/exit", "Keluar dari aplikasi"),
+]
+
+
 def print_help() -> None:
-    commands = ("/help (bantuan)", "/reset (reset percakapan)", "/exit (keluar)")
-    print("Perintah: " + ", ".join(_paint(command, "cyan") for command in commands))
+    print("\n" + _paint("DAFTAR PERINTAH TERSEDIA:", "cyan"))
+    for cmd, desc in COMMANDS_HELP:
+        print(f"  {_paint(f'{cmd:<13}', 'green')} - {desc}")
+
+
+def save_history(messages: list[dict[str, str]], filename: str = "chat_export.txt") -> None:
+    try:
+        with open(filename, "w", encoding="utf-8") as file:
+            for msg in messages:
+                role = msg["role"].upper()
+                if role == "SYSTEM":
+                    continue
+                file.write(f"[{role}]\n{msg['content']}\n\n")
+        print(_paint(f"Riwayat percakapan berhasil disimpan ke '{filename}'.", "green"))
+    except (OSError, ValueError, TypeError) as error:
+        print(_paint(f"Gagal menyimpan file: {error}", "red"))
+
+
+def print_status(model: str, base_url: str, message_count: int) -> None:
+    turns = (message_count - 1) // 2
+    print("\n" + _paint("STATUS PERSONAL AI:", "cyan"))
+    print(f"  {_paint('Model Aktif', 'green'):<22}: {model}")
+    print(f"  {_paint('Base URL', 'green'):<22}: {base_url}")
+    print(f"  {_paint('Total Percakapan', 'green'):<22}: {turns} turn ({message_count - 1} pesan)")
 
 
 def run_chat(
@@ -160,25 +251,61 @@ def run_chat(
     model: str | None = None,
 ) -> None:
     if client is None:
-        client, model = create_client()
+        client, model, _ = create_client()
 
+    _print_logo()
+
+    try:
+        combos = get_combos(client)
+    except OpenAIError as error:
+        print(_paint(f"Daftar combo tidak tersedia: {error}", "yellow"))
+        combos = []
+    except (OSError, ValueError, TypeError) as error:
+        print(_paint(f"Daftar combo tidak tersedia: {error}", "yellow"))
+        combos = []
+
+    try:
+        model = choose_combo(combos, model or DEFAULT_MODEL, input_fn)
+    except (EOFError, KeyboardInterrupt):
+        return
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    print(_paint("Ketik /help untuk melihat daftar perintah.", "dim"))
 
     while True:
         try:
             question = input_fn("\n" + _paint(">", "cyan") + " ").strip()
             if not question:
                 continue
-            command = question.lower()
-            if command == "/exit":
+            cmd_parts = question.split(maxsplit=1)
+            command = cmd_parts[0].lower()
+
+            if command in ("/exit", "/quit"):
                 break
             if command == "/help":
                 print_help()
                 continue
             if command == "/reset":
                 messages[:] = [{"role": "system", "content": SYSTEM_PROMPT}]
-                print(_paint("Riwayat direset.", "dim"))
+                print(_paint("Riwayat percakapan direset.", "dim"))
                 continue
+            if command in ("/clear", "/cls"):
+                os.system("cls" if os.name == "nt" else "clear")
+                continue
+            if command in ("/model", "/combo"):
+                try:
+                    model = choose_combo(combos, model or DEFAULT_MODEL, input_fn)
+                    print(_paint(f"Model diganti ke: {model}", "green"))
+                except (EOFError, KeyboardInterrupt):
+                    pass
+                continue
+            if command in ("/status", "/info"):
+                print_status(model or DEFAULT_MODEL, str(client.base_url), len(messages))
+                continue
+            if command == "/save":
+                filename = cmd_parts[1].strip() if len(cmd_parts) > 1 else "chat_export.txt"
+                save_history(messages, filename)
+                continue
+
             chat(question, client, model or DEFAULT_MODEL, messages)
         except KeyboardInterrupt:
             print()

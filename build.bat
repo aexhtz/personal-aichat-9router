@@ -8,7 +8,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 ".venv\Scripts\python.exe" -m pip install -r requirements-build.txt
 if errorlevel 1 goto failed
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --console --name "Personal AI" --distpath "%~dp0dist" --workpath "%~dp0build\pyinstaller" --specpath "%~dp0build" --paths "%~dp0" personal_ai\chat.py
+"%~dp0.venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onefile --console --name "Personal AI" --distpath "%~dp0dist" --workpath "%~dp0build\pyinstaller" --specpath "%~dp0build" --paths "%~dp0" --hidden-import ctypes --hidden-import ctypes._layout --collect-submodules ctypes personal_ai\chat.py
 if errorlevel 1 goto failed
 echo.
 echo Built: dist\Personal AI.exe

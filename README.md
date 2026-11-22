@@ -7,9 +7,10 @@ Asisten AI percakapan ringan yang berjalan di Windows Command Prompt. Ajukan per
 ## Fitur
 
 - Percakapan AI dari CMD
-- Jawaban tampil secara streaming
+- Jawaban tampil secara streaming dengan label combo aktif
 - Dukungan provider yang kompatibel dengan OpenAI Chat Completions
-- API key, endpoint, dan model diatur melalui `.env`
+- API key dan endpoint diatur melalui `.env`
+- Pilih combo/model dari daftar yang disediakan endpoint API sebelum mulai chat
 - Konteks percakapan terbaru selama sesi berjalan
 - Perintah `/help`, `/reset`, dan `/exit`
 - Opsi build menjadi executable console Windows
@@ -45,9 +46,9 @@ Atau klik dua kali `Personal AI.bat`.
 | --- | --- | --- |
 | `ROUTER_API_KEY` | API key provider | Wajib diisi |
 | `ROUTER_BASE_URL` | URL dasar API kompatibel OpenAI | `http://localhost:20128/v1` |
-| `ROUTER_MODEL` | ID model yang diterima provider | `cx/gpt-6-luna[1m]` |
+| `ROUTER_MODEL` | ID combo/model yang diterima provider; pilihan default | `9router-gptcontext1m` |
 
-Default mengikuti konfigurasi awal 9Router. Ubah nilainya sesuai provider yang digunakan. Nama `ROUTER_*` dipertahankan agar konfigurasi lama tetap berlaku; endpoint dapat diarahkan ke layanan kompatibel lainnya.
+Default combo adalah `9router-gptcontext1m`. Saat aplikasi dibuka, CLI meminta pilihan dari model berawalan `9router-` yang dikembalikan endpoint `/models`; tekan Enter untuk memakai `ROUTER_MODEL`, atau masukkan nomor pilihan. Label jawaban menampilkan combo aktif, misalnya `AI 9router-deepseek:`. Jika daftar model tidak tersedia, aplikasi meminta ID combo secara manual dan tetap memakai default bila input dikosongkan. Nama `ROUTER_*` dipertahankan agar konfigurasi lama tetap berlaku; endpoint dapat diarahkan ke layanan kompatibel lainnya.
 
 ## Perintah CLI
 
@@ -58,7 +59,7 @@ Default mengikuti konfigurasi awal 9Router. Ubah nilainya sesuai provider yang d
 | `/exit` | Keluar dari aplikasi |
 | `Ctrl+C` | Hentikan sesi |
 
-Konteks percakapan disimpan di memori dan tidak ditulis ke disk. Aplikasi mengirim maksimal 40 pesan percakapan terbaru beserta system prompt. Pesan yang lebih lama akan dikeluarkan dari konteks.
+Konteks percakapan disimpan di memori dan tidak ditulis ke disk. Aplikasi mengirim maksimal 40 pesan percakapan terbaru beserta system prompt. Pesan yang lebih lama akan dikeluarkan dari konteks. Pilihan combo berlaku untuk seluruh sesi berjalan.
 
 ## Build executable Windows
 
